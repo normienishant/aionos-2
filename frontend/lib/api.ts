@@ -5,16 +5,20 @@ import type {
   SendMessageResponse,
 } from "./types";
 
-// The Next.js rewrite in next.config.mjs proxies /api/* to the FastAPI backend,
-// so same-origin fetches work in both dev and prod.
+// The browser talks to the FastAPI backend DIRECTLY (CORS is enabled for the
+// frontend origin). Going through the Next.js dev-server proxy resets the
+// connection on long agentic turns (LLM rounds can take >30s), so a direct
+// call is the reliable path for both dev and hosted deployments.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { cache: "no-store" });
+  const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
   return res.json();
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
