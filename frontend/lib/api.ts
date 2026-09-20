@@ -5,15 +5,13 @@ import type {
   SendMessageResponse,
 } from "./types";
 
-// Empty default = same origin: in the single-service Docker deploy FastAPI
-// serves this static frontend AND the API, so no CORS or proxy is involved at
-// all. For the two-service deploy (Vercel frontend + Render backend) set
-// NEXT_PUBLIC_API_URL to the backend URL; for local dev either run
-// `npm run dev` alongside uvicorn on :8000 and pass
-// NEXT_PUBLIC_API_URL=http://127.0.0.1:8000, or rely on the Next.js rewrite.
-// NOTE: still avoid routing long agentic turns (>30s) through the Next.js dev
-// proxy — set the env var for dev if the connection resets mid-turn.
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+// Dev (npm run dev) -> talk to uvicorn on 127.0.0.1:8000 directly: long
+// agentic turns (>30s) reset through the Next.js dev proxy. Production
+// builds default to same origin (""), which is right for the single-service
+// Docker deploy; for a split deploy set NEXT_PUBLIC_API_URL explicitly.
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : "");
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
