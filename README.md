@@ -55,7 +55,7 @@ Rs.1,500 vs Rs.1,501), all 3 scenario flows (refund, rebooking, denials,
 escalations), guard rails (legal threats, prompt injection) and audit-trail
 integrity, against a throwaway database. Exit code 0 = all pass.
 
-Optional env vars (all defaulted): `GEMINI_MODEL` (default `gemini-2.0-flash`),
+Optional env vars (all defaulted): `GEMINI_MODEL` (default `gemini-3.8-flash`; the agent also falls back through a chain of newer flash models automatically if a model's free-tier quota is exhausted or retired),
 `DATABASE_URL` (Postgres/Supabase, see below), `FRONTEND_ORIGIN`.
 
 ### Using PostgreSQL / Supabase instead of SQLite

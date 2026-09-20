@@ -15,6 +15,8 @@ the model is instructed to call escalate_to_human, and if it still doesn't,
 the loop escalates server-side (deterministic, policy-guaranteed).
 """
 import json
+import re
+import time
 from typing import Any
 
 from google import genai
@@ -22,8 +24,22 @@ from google.genai import types
 
 from . import tools as tools_mod
 from .config import GEMINI_API_KEY, GEMINI_MODEL
+
+# Fallback chain: if the chosen model's free-tier quota is exhausted, the call
+# transparently falls back to the next model (same tools, same audit trail).
+MODEL_FALLBACKS = [
+    GEMINI_MODEL,
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+]
 from .guard import detect_injection, detect_legal_threat
-from .models import Conversation, Message
+from .models import Booking, Conversation, Customer, Message
 from .tools import ToolContext
 
 MAX_TOOL_ROUNDS = 8
@@ -66,6 +82,12 @@ You help customers affected by flight disruptions. Today is Wednesday, 23 Septem
   they ask for an exception;
 - the customer mentions legal action, lawyers, consumer court, or a formal complaint;
 - a refund is requested to a payment method other than the original.
+IMPORTANT on refund wording: when customers say "cash refund", "full refund",
+"my money back" or similar, they mean the standard refund (as opposed to a
+voucher or rebooking) - this is an entitled choice under R1/R3. Execute it
+immediately with execute_refund (which always refunds the ORIGINAL payment
+method). Only escalate if they EXPLICITLY demand a different payment method
+than the original (e.g. "send it to a different card/bank account").
 When escalating: empathise first, say you're escalating to the specialist team
 right now, and that they will reach out directly. Never promise any outcome.
 
@@ -218,6 +240,29 @@ def run_agent_turn(db, conversation: Conversation, user_message: str, ctx: ToolC
     client = genai.Client(api_key=GEMINI_API_KEY)
     contents = _history_contents(conversation, db)
 
+    # Per-thread identity context: the UI always opens a conversation from a
+    # selected customer, so the agent already "knows" who it is talking to.
+    # Pass the identity through so it never asks for the PNR, but keep flight
+    # details flowing through tools so every fact stays auditable.
+    customer = (
+        db.query(Customer)
+        .join(Booking, Booking.customer_id == Customer.id)
+        .filter(Booking.pnr == conversation.pnr)
+        .first()
+    )
+    context_block = ""
+    if customer:
+        context_block = (
+            "\n\n## Current customer context\n"
+            "This conversation is already linked to an identified customer. "
+            "Do NOT ask for their name, booking reference or PNR - use the PNR "
+            "below for every tool call, and call lookup_booking first to see "
+            "their flight details before describing them.\n"
+            f"- Name: {customer.name}\n"
+            f"- Loyalty tier: {customer.loyalty_tier}\n"
+            f"- PNR: {conversation.pnr}\n"
+        )
+
     mandatory = ""
     if threat:
         mandatory = (
@@ -233,7 +278,7 @@ def run_agent_turn(db, conversation: Conversation, user_message: str, ctx: ToolC
         )
 
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT + mandatory,
+        system_instruction=SYSTEM_PROMPT + context_block + mandatory,
         tools=[types.Tool(function_declarations=TOOL_DECLARATIONS)],
         temperature=0.2,  # low temperature for consistent, auditable behaviour
     )
@@ -242,9 +287,30 @@ def run_agent_turn(db, conversation: Conversation, user_message: str, ctx: ToolC
 
     # ---- The agentic loop --------------------------------------------------
     for _ in range(MAX_TOOL_ROUNDS):
-        response = client.models.generate_content(
-            model=GEMINI_MODEL, contents=contents, config=config
-        )
+        # Call the model with retry-with-backoff (honouring Google's "retry in
+        # Xs" hint) plus a model fallback chain: the free tier caps requests
+        # per minute, and the demo must never die on a quota error.
+        response = None
+        for model_name in MODEL_FALLBACKS:
+            try:
+                response = client.models.generate_content(
+                    model=model_name, contents=contents, config=config
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 - inspect, then fall back
+                msg = str(exc)
+                quota = "429" in msg or "RESOURCE_EXHAUSTED" in msg or "503" in msg or "UNAVAILABLE" in msg
+                retired = "404" in msg and "no longer available" in msg
+                if retired:
+                    continue  # model unusable for this key -> next in chain
+                if not quota:
+                    raise
+                time.sleep(3.0)  # brief pause, then try the next model in the chain
+        if response is None:  # every model quota-exhausted -> wait out the window once
+            time.sleep(35.0)
+            response = client.models.generate_content(
+                model=MODEL_FALLBACKS[0], contents=contents, config=config
+            )
         calls = []
         if response.function_calls:
             calls = list(response.function_calls)
@@ -263,19 +329,26 @@ def run_agent_turn(db, conversation: Conversation, user_message: str, ctx: ToolC
                 "args": dict(call.args or {}),
                 "result": outcome,
                 "policy_reference": outcome.get("policy_reference", ""),
-                "escalated": bool(outcome.get("escalated")) or call.name == "escalate_to_human",
+                "escalated": bool(outcome.get("escalated") or outcome.get("must_escalate")) or call.name == "escalate_to_human",
             })
-            if outcome.get("escalated") or call.name == "escalate_to_human":
+            if outcome.get("escalated") or outcome.get("must_escalate") or call.name == "escalate_to_human":
                 result.escalated = True
             parts.append(types.Part(
                 function_response=types.FunctionResponse(
                     name=call.name, response={"result": json.dumps(outcome, ensure_ascii=False)}
                 )
             ))
-        contents.append(types.Content(role="model", parts=[
-            types.Part(function_call=types.FunctionCall(name=c.name, args=dict(c.args or {})))
-            for c in calls
-        ]))
+        # Gemini 3 requires function-call parts to carry their thought_signature
+        # when sent back. Rebuilding the turn manually would strip it, so append
+        # the model's own candidate content (signatures included) verbatim.
+        candidate_content = response.candidates[0].content if response.candidates else None
+        if candidate_content is not None and candidate_content.parts:
+            contents.append(candidate_content)
+        else:  # defensive fallback: rebuild the turn by hand
+            contents.append(types.Content(role="model", parts=[
+                types.Part(function_call=types.FunctionCall(name=c.name, args=dict(c.args or {})))
+                for c in calls
+            ]))
         contents.append(types.Content(role="user", parts=parts))
     else:
         # Too many tool rounds - force a wrap-up
@@ -285,6 +358,9 @@ def run_agent_turn(db, conversation: Conversation, user_message: str, ctx: ToolC
         )
 
     # ---- Deterministic guard (AFTER the LLM): guarantee the escalation -----
+    # result.escalated already covers must_escalate tool outcomes (fare waivers
+    # above Rs.1,500); this guard guarantees legal-threat escalation even if the
+    # LLM omits the escalate_to_human call.
     if threat and not result.escalated:
         outcome = tools_mod.execute_tool(
             "escalate_to_human",
