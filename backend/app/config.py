@@ -22,6 +22,12 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL", f"sqlite:///{Path(__file__).resolve().parent.parent / 'airline_agent.db'}"
 )
 
+# Hosted Postgres providers (Supabase pooler, Render, Neon...) hand out
+# postgresql:// URLs; we ship the psycopg driver, so add the +psycopg scheme
+# automatically unless the caller already picked a dialect.
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
 # --- LLM --------------------------------------------------------------------
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")

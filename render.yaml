@@ -1,0 +1,42 @@
+# Render Blueprint — one click deploy for SkyLine Assist.
+# In Render: New + -> Blueprint -> pick this repo -> Apply.
+# You will be prompted for GEMINI_API_KEY; everything else is automatic.
+#
+# The free Postgres that Render provisions expires after 30 days — for a
+# permanent free DB paste a Supabase DATABASE_URL into the service's
+# Environment tab afterwards (schema + seed are created automatically on
+# startup, no migration step needed).
+
+services:
+  - type: web
+    name: skyline-assist
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: skyline-assist-db
+          property: host
+      - key: FRONTEND_ORIGIN
+        value: "*"
+
+  # Free Postgres for the demo. Fine for recording and grading; swap in a
+  # Supabase URL for anything longer-lived.
+  - type: pserv
+    name: skyline-assist-db
+    runtime: image
+    plan: free
+    image:
+      url: postgres:16-alpine
+    disk:
+      name: skyline-data
+      mountPath: /var/lib/postgresql/data
+      sizeGB: 1

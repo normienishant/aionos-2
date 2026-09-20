@@ -74,6 +74,34 @@ delete `backend/airline_agent.db` and restart — the seed runs automatically.
 
 ---
 
+## 1b. One-click cloud deploy (Render)
+
+The repo ships a Render blueprint (`render.yaml`) that deploys the **whole app
+as one service**: FastAPI serves both the API and the compiled Next.js static
+frontend — same origin, no CORS, no proxy, no cold-start proxy issues.
+
+1. Push this repo to GitHub (already done).
+2. On [render.com](https://render.com): **New + → Blueprint** → select the
+   repo → Render reads `render.yaml` → paste your `GEMINI_API_KEY` → **Apply**.
+3. Wait ~5 minutes. Your app is live at `https://skyline-assist.onrender.com`
+   with a free Postgres instance alongside it.
+
+Notes:
+- The database schema and seed data are created automatically on startup —
+  no migration step. The Render free Postgres expires after 30 days; for a
+  permanent free DB create one at [supabase.com](https://supabase.com) and
+  paste its URI (plain `postgresql://...` is fine — the app adds the
+  `+psycopg` driver itself) into the service's **Environment** tab.
+- `FRONTEND_ORIGIN` is `*` in the blueprint since frontend and API share one
+  origin; tighten it if you split the deployment (Vercel + Render).
+- **Free tier cold start:** the service sleeps after ~15 idle minutes and the
+  first request then takes ~50s. Wake it before a demo (open the URL, or ping
+  `/api/health` from cron-job.org every 10 min).
+- Local equivalent of the container: `EXPORT=1 npm run build` in `frontend/`,
+  then start uvicorn as usual — `out/` is served at `/` automatically.
+
+---
+
 ## 2. Architecture & process flow
 
 ```

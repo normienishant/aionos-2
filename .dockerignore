@@ -1,0 +1,14 @@
+# Never bake local state or secrets into the image
+backend/.venv/
+backend/.env
+backend/airline_agent.db
+backend/__pycache__/
+backend/**/__pycache__/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/tsconfig.tsbuildinfo
+.git/
+.freebuff/
+NOTES.md
+*.md

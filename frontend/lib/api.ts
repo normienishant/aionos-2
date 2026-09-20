@@ -5,11 +5,15 @@ import type {
   SendMessageResponse,
 } from "./types";
 
-// The browser talks to the FastAPI backend DIRECTLY (CORS is enabled for the
-// frontend origin). Going through the Next.js dev-server proxy resets the
-// connection on long agentic turns (LLM rounds can take >30s), so a direct
-// call is the reliable path for both dev and hosted deployments.
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+// Empty default = same origin: in the single-service Docker deploy FastAPI
+// serves this static frontend AND the API, so no CORS or proxy is involved at
+// all. For the two-service deploy (Vercel frontend + Render backend) set
+// NEXT_PUBLIC_API_URL to the backend URL; for local dev either run
+// `npm run dev` alongside uvicorn on :8000 and pass
+// NEXT_PUBLIC_API_URL=http://127.0.0.1:8000, or rely on the Next.js rewrite.
+// NOTE: still avoid routing long agentic turns (>30s) through the Next.js dev
+// proxy — set the env var for dev if the connection resets mid-turn.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
