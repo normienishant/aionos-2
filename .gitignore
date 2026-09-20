@@ -1,0 +1,19 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/airline_agent.db
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/next-env.d.ts
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal prep — not part of the submission
+NOTES.md
+.freebuff/
