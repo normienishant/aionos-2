@@ -11,16 +11,20 @@ COPY frontend/ .
 RUN EXPORT=1 npm run build
 
 # ---------- Stage 2: FastAPI serves API + static site ----------
+# Keep the repo layout (/app/backend, /app/frontend/out): main.py derives the
+# static dir as backend/../frontend/out, so flattening backend/ into /app
+# would silently break static serving (it fell back to JSON responses).
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements.txt ./backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt
 
-COPY backend/ .
-# Compiled static site from stage 1 -> served by FastAPI at /
+COPY backend/ ./backend/
+# Compiled static site from stage 1 -> main.py serves it at /
 COPY --from=frontend-build /app/out ./frontend/out
 
+WORKDIR /app/backend
 EXPOSE 8000
 # Render injects $PORT; shell form so the variable expands at runtime.
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
